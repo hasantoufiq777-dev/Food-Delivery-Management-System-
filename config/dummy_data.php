@@ -1,13 +1,7 @@
 <?php
-/**
- * Dummy Data Configuration
- * Food Delivery Management System
- * 
- * All static data arrays used across the application.
- * Replace with MySQL queries when wiring up the database.
- */
 
-// ─── Restaurants ────────────────────────────────────────────────
+
+//  Restaurants 
 $restaurants = [
     [
         'id' => 1,
@@ -76,7 +70,7 @@ $restaurants = [
     ]
 ];
 
-// ─── Menu Items ─────────────────────────────────────────────────
+// Menu Items 
 $menu_items = [
     // The Spice Garden (restaurant_id: 1)
     ['id' => 1,  'restaurant_id' => 1, 'name' => 'Butter Chicken',     'price' => 14.99, 'category' => 'Main Course',  'description' => 'Creamy tomato-based curry with tender chicken pieces', 'image_url' => 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=300&h=200&fit=crop', 'available' => true],
@@ -109,7 +103,7 @@ $menu_items = [
     ['id' => 20, 'restaurant_id' => 5, 'name' => 'Croissant Basket',   'price' => 7.49,  'category' => 'Breads',       'description' => 'Assorted freshly baked butter croissants',            'image_url' => 'https://images.unsplash.com/photo-1555507036-ab1f4038024a?w=300&h=200&fit=crop', 'available' => true],
 ];
 
-// ─── Customers ──────────────────────────────────────────────────
+// Customers 
 $customers = [
     ['id' => 1,  'name' => 'Alice Johnson',    'email' => 'alice@example.com',    'password' => 'password', 'phone' => '+1-555-1001', 'address' => '123 Maple Street, Apt 4B',     'created_at' => '2025-01-10 08:00:00'],
     ['id' => 2,  'name' => 'Bob Martinez',      'email' => 'bob@example.com',      'password' => 'password', 'phone' => '+1-555-1002', 'address' => '456 Oak Avenue, Suite 200',     'created_at' => '2025-01-15 09:30:00'],
@@ -123,7 +117,7 @@ $customers = [
     ['id' => 10, 'name' => 'Jake Nguyen',        'email' => 'jake@example.com',     'password' => 'password', 'phone' => '+1-555-1010', 'address' => '480 Redwood Place',             'created_at' => '2025-05-15 11:30:00'],
 ];
 
-// ─── Delivery Agents ────────────────────────────────────────────
+//  Delivery Agents 
 $agents = [
     ['id' => 1, 'name' => 'Marcus Reed',     'email' => 'marcus@example.com',  'password' => 'password', 'phone' => '+1-555-2001', 'vehicle' => 'Motorcycle', 'status' => 'available', 'rating' => 4.8, 'deliveries_completed' => 234, 'created_at' => '2025-01-05 08:00:00'],
     ['id' => 2, 'name' => 'Priya Sharma',    'email' => 'priya@example.com',   'password' => 'password', 'phone' => '+1-555-2002', 'vehicle' => 'Bicycle',    'status' => 'busy',      'rating' => 4.6, 'deliveries_completed' => 189, 'created_at' => '2025-01-12 09:00:00'],
@@ -132,7 +126,7 @@ $agents = [
     ['id' => 5, 'name' => 'Liam O\'Brien',   'email' => 'liam@example.com',    'password' => 'password', 'phone' => '+1-555-2005', 'vehicle' => 'Bicycle',    'status' => 'available', 'rating' => 4.5, 'deliveries_completed' => 98,  'created_at' => '2025-04-01 12:00:00'],
 ];
 
-// ─── Orders ─────────────────────────────────────────────────────
+// Orders
 $orders = [
     [
         'id' => 1001, 'customer_id' => 1, 'restaurant_id' => 1, 'agent_id' => 1,
@@ -304,7 +298,7 @@ $orders = [
     ],
 ];
 
-// ─── Cart (Session-based, default empty) ────────────────────────
+//  Cart (Session-based, default empty)
 $default_cart = [
     'restaurant_id' => null,
     'items' => [],
@@ -313,7 +307,7 @@ $default_cart = [
     'total' => 3.99,
 ];
 
-// ─── Status Flow Definitions ────────────────────────────────────
+//  Status Flow Definitions 
 $order_status_flow = ['placed', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered'];
 $order_status_labels = [
     'placed'           => 'Placed',
@@ -325,8 +319,8 @@ $order_status_labels = [
     'cancelled'        => 'Cancelled',
 ];
 
-// ─── Categories ─────────────────────────────────────────────────
+// Categories
 $menu_categories = ['Main Course', 'Appetizer', 'Sushi Rolls', 'Sashimi', 'Pizza', 'Pasta', 'Soups', 'Breads', 'Rice', 'Desserts', 'Beverages'];
 
-// ─── Cuisine Types ──────────────────────────────────────────────
+// Cuisine Types 
 $cuisine_types = ['Indian', 'Japanese', 'Italian', 'Chinese', 'French', 'Mexican', 'Thai', 'American'];
