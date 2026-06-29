@@ -26,15 +26,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_profile'])) {
     if (empty($name) || empty($email) || empty($phone)) {
         set_flash('error', 'Please fill in all required fields.');
     } else {
-        // Find and edit customer profile in static session lists if simulated, or just print success for demo
-        set_flash('success', 'Profile updated successfully (dummy session updated).');
+        try {
+            // 1. Update users table in Oracle
+            $stmt = $conn->prepare("UPDATE users SET name = :name, email = :email, phone = :phone WHERE user_id = :id");
+            $stmt->execute([
+                'name' => $name,
+                'email' => $email,
+                'phone' => $phone,
+                'id' => $customer_id
+            ]);
+            
+            // 2. Persist updated address to session
+            $_SESSION['customer_address_' . $customer_id] = $address;
+            
+            // 3. Try to update their last order's address in the database if it exists
+            $o_stmt = $conn->prepare("UPDATE orders SET delivery_address = :address WHERE order_id = (SELECT order_id FROM (SELECT order_id FROM orders WHERE customer_id = :cid ORDER BY created_at DESC) WHERE ROWNUM = 1)");
+            $o_stmt->execute([
+                'address' => $address,
+                'cid' => $customer_id
+            ]);
+            
+            set_flash('success', 'Profile updated successfully.');
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
+        }
         header('Location: profile.php');
         exit;
     }
 }
 
-// Find customer details
-$customer = find_by_id($customers, $customer_id);
+// Find customer details using specific DB loader
+$customer = get_db_customer($customer_id);
 ?>
 
 <div class="page-header">

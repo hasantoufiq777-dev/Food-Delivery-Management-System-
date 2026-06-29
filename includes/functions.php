@@ -468,3 +468,256 @@ function order_items_count($order) {
     }
     return $count;
 }
+
+/**
+ * Normalized Database helper utilities
+ */
+function db_normalize($data) {
+    if ($data === null || $data === false) {
+        return $data;
+    }
+    if (!is_array($data)) {
+        return $data;
+    }
+    
+    // Check if we are dealing with a list of rows
+    if (isset($data[0]) && is_array($data[0])) {
+        $normalized = [];
+        foreach ($data as $row) {
+            $normalized[] = db_normalize($row);
+        }
+        return $normalized;
+    }
+    
+    $normalized = [];
+    $keys = array_map('strtolower', array_keys($data));
+    $has_item_id = in_array('item_id', $keys) || in_array('menu_item_id', $keys);
+    $has_order_id = in_array('order_id', $keys);
+    
+    foreach ($data as $key => $value) {
+        $new_key = strtolower($key);
+        if (is_resource($value)) {
+            $value = stream_get_contents($value);
+        }
+        if ($new_key === 'cuisine_type') $new_key = 'cuisine';
+        if ($new_key === 'vehicle_type') $new_key = 'vehicle';
+        if ($new_key === 'restaurant_id') {
+            $normalized['restaurant_id'] = is_array($value) ? db_normalize($value) : $value;
+            if (!$has_item_id && !$has_order_id) {
+                $new_key = 'id';
+            }
+        }
+        if ($new_key === 'item_id') $new_key = 'id';
+        if ($new_key === 'agent_id') {
+            $normalized['agent_id'] = is_array($value) ? db_normalize($value) : $value;
+            if (!$has_order_id) {
+                $new_key = 'id';
+            }
+        }
+        if ($new_key === 'order_id') $new_key = 'id';
+        if ($new_key === 'total_amount') $new_key = 'total';
+        if ($new_key === 'unit_price') $new_key = 'price';
+        if ($new_key === 'is_available') $new_key = 'available';
+        
+        $normalized[$new_key] = is_array($value) ? db_normalize($value) : $value;
+    }
+    return $normalized;
+}
+
+function get_db_restaurants() {
+    global $conn;
+    $stmt = $conn->prepare("SELECT r.*, u.email, u.phone FROM restaurants r JOIN users u ON r.user_id = u.user_id");
+    $stmt->execute();
+    return db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function get_db_restaurant($id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT r.*, u.email, u.phone FROM restaurants r JOIN users u ON r.user_id = u.user_id WHERE r.restaurant_id = :id");
+    $stmt->execute(['id' => $id]);
+    return db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+}
+
+function get_db_menu_items($restaurant_id = null) {
+    global $conn;
+    if ($restaurant_id) {
+        $stmt = $conn->prepare("SELECT * FROM menu_items WHERE restaurant_id = :rid");
+        $stmt->execute(['rid' => $restaurant_id]);
+    } else {
+        $stmt = $conn->prepare("SELECT * FROM menu_items");
+        $stmt->execute();
+    }
+    return db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function get_db_menu_item($id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT * FROM menu_items WHERE item_id = :id");
+    $stmt->execute(['id' => $id]);
+    return db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+}
+
+function get_db_agents() {
+    global $conn;
+    $stmt = $conn->prepare("SELECT a.*, u.name, u.email, u.phone FROM delivery_agents a JOIN users u ON a.user_id = u.user_id");
+    $stmt->execute();
+    $agents = db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+    foreach ($agents as &$agent) {
+        $c_stmt = $conn->prepare("SELECT COUNT(*) FROM orders WHERE agent_id = :aid AND status = 'delivered'");
+        $c_stmt->execute(['aid' => $agent['id']]);
+        $agent['deliveries_completed'] = $c_stmt->fetchColumn() ?: 0;
+    }
+    return $agents;
+}
+
+function get_db_agent($id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT a.*, u.name, u.email, u.phone FROM delivery_agents a JOIN users u ON a.user_id = u.user_id WHERE a.agent_id = :id");
+    $stmt->execute(['id' => $id]);
+    $agent = db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+    if ($agent) {
+        $c_stmt = $conn->prepare("SELECT COUNT(*) FROM orders WHERE agent_id = :aid AND status = 'delivered'");
+        $c_stmt->execute(['aid' => $id]);
+        $agent['deliveries_completed'] = $c_stmt->fetchColumn() ?: 0;
+    }
+    return $agent;
+}
+
+function get_db_customers() {
+    global $conn;
+    $stmt = $conn->prepare("SELECT user_id as id, name, email, phone FROM users WHERE role = 'customer'");
+    $stmt->execute();
+    return db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function get_db_customer($id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT user_id as id, name, email, phone FROM users WHERE user_id = :id AND role = 'customer'");
+    $stmt->execute(['id' => $id]);
+    $cust = db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+    if ($cust) {
+        if (isset($_SESSION['customer_address_' . $id])) {
+            $cust['address'] = $_SESSION['customer_address_' . $id];
+        } else {
+            $o_stmt = $conn->prepare("SELECT delivery_address FROM (SELECT delivery_address FROM orders WHERE customer_id = :cid ORDER BY created_at DESC) WHERE ROWNUM = 1");
+            $o_stmt->execute(['cid' => $id]);
+            $addr = $o_stmt->fetchColumn();
+            if (is_resource($addr)) {
+                $addr = stream_get_contents($addr);
+            }
+            $cust['address'] = $addr ?: '123 Maple Street, Apt 4B'; // Fallback to demo default
+        }
+    }
+    return $cust;
+}
+
+function get_db_orders($filters = []) {
+    global $conn;
+    $sql = "SELECT * FROM orders WHERE 1=1";
+    $params = [];
+    if (isset($filters['customer_id'])) {
+        $sql .= " AND customer_id = :cid";
+        $params['cid'] = $filters['customer_id'];
+    }
+    if (isset($filters['restaurant_id'])) {
+        $sql .= " AND restaurant_id = :rid";
+        $params['rid'] = $filters['restaurant_id'];
+    }
+    if (isset($filters['agent_id'])) {
+        $sql .= " AND agent_id = :aid";
+        $params['aid'] = $filters['agent_id'];
+    }
+    if (isset($filters['status']) && $filters['status'] !== '') {
+        $sql .= " AND status = :status";
+        $params['status'] = $filters['status'];
+    }
+    $sql .= " ORDER BY created_at DESC";
+    $stmt = $conn->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // For each order, fetch items if requested
+    $orders = db_normalize($rows);
+    foreach ($orders as &$order) {
+        $i_stmt = $conn->prepare("SELECT oi.*, mi.name FROM order_items oi JOIN menu_items mi ON oi.item_id = mi.item_id WHERE oi.order_id = :id");
+        $i_stmt->execute(['id' => $order['id']]);
+        $order['items'] = db_normalize($i_stmt->fetchAll(PDO::FETCH_ASSOC));
+        
+        // Dynamically compute subtotal, delivery_fee, and payment_method fallback
+        if (!isset($order['subtotal'])) {
+            $order['subtotal'] = max(0, $order['total'] - 3.99);
+        }
+        if (!isset($order['delivery_fee'])) {
+            $order['delivery_fee'] = 3.99;
+        }
+        if (!isset($order['payment_method'])) {
+            $order['payment_method'] = 'Credit Card'; // Fallback display
+        }
+    }
+    return $orders;
+}
+
+function get_db_order($id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT * FROM orders WHERE order_id = :id");
+    $stmt->execute(['id' => $id]);
+    $order = db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+    if ($order) {
+        $i_stmt = $conn->prepare("SELECT oi.*, mi.name FROM order_items oi JOIN menu_items mi ON oi.item_id = mi.item_id WHERE oi.order_id = :id");
+        $i_stmt->execute(['id' => $id]);
+        $order['items'] = db_normalize($i_stmt->fetchAll(PDO::FETCH_ASSOC));
+        
+        // Dynamically compute subtotal, delivery_fee, and payment_method fallback
+        if (!isset($order['subtotal'])) {
+            $order['subtotal'] = max(0, $order['total'] - 3.99);
+        }
+        if (!isset($order['delivery_fee'])) {
+            $order['delivery_fee'] = 3.99;
+        }
+        if (!isset($order['payment_method'])) {
+            $order['payment_method'] = 'Credit Card'; // Fallback display
+        }
+    }
+    return $order;
+}
+
+function get_db_cart($customer_id) {
+    global $conn;
+    $stmt = $conn->prepare("SELECT * FROM carts WHERE customer_id = :cid");
+    $stmt->execute(['cid' => $customer_id]);
+    $cart = db_normalize($stmt->fetch(PDO::FETCH_ASSOC));
+    
+    if (!$cart) {
+        return [
+            'restaurant_id' => null,
+            'items' => [],
+            'subtotal' => 0,
+            'delivery_fee' => 3.99,
+            'total' => 3.99
+        ];
+    }
+    
+    $stmt = $conn->prepare("SELECT ci.quantity, mi.item_id as menu_item_id, mi.name, mi.price, mi.restaurant_id 
+                            FROM cart_items ci 
+                            JOIN menu_items mi ON ci.item_id = mi.item_id 
+                            WHERE ci.cart_id = :cart_id");
+    $stmt->execute(['cart_id' => $cart['cart_id']]);
+    $items = db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+    
+    $restaurant_id = null;
+    $subtotal = 0;
+    if (!empty($items)) {
+        $restaurant_id = $items[0]['restaurant_id'];
+        foreach ($items as $item) {
+            $subtotal += $item['price'] * $item['quantity'];
+        }
+    }
+    
+    return [
+        'restaurant_id' => $restaurant_id,
+        'items' => $items,
+        'subtotal' => $subtotal,
+        'delivery_fee' => 3.99,
+        'total' => $subtotal + 3.99
+    ];
+}

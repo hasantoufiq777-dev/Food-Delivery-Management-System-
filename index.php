@@ -8,7 +8,14 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 require_once __DIR__ . '/config/dummy_data.php';
+require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/functions.php';
+
+try {
+    $conn = get_db_connection_pdo();
+} catch (PDOException $e) {
+    die("Database Connection Failed: " . $e->getMessage());
+}
 
 // Handle Logout
 if (isset($_GET['action']) && $_GET['action'] === 'logout') {
@@ -35,6 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['switch_role'])) {
 
 // Handle Login Submit
 $error = '';
+$authenticated = false;
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
     $email = trim($_POST['email']);
     $password = trim($_POST['password']);
@@ -43,45 +51,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
     if (empty($email) || empty($password) || empty($selected_role)) {
         $error = 'Please fill in all fields.';
     } else {
-        $authenticated = false;
-        
-        if ($selected_role === 'admin') {
-            // Static admin login check
-            if ($email === 'admin@example.com' && $password === 'admin123') {
-                $_SESSION['role'] = 'admin';
-                $_SESSION['is_admin'] = true;
+        try {
+            $stmt = $conn->prepare("SELECT user_id, name, email, password_hash, role FROM users WHERE LOWER(email) = LOWER(:email) AND role = :role");
+            $stmt->execute([
+                'email' => $email,
+                'role' => $selected_role
+            ]);
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($user && $user['PASSWORD_HASH'] === $password) {
+                $_SESSION['role'] = $selected_role;
+                
+                if ($selected_role === 'admin') {
+                    $_SESSION['is_admin'] = true;
+                } elseif ($selected_role === 'customer') {
+                    $_SESSION['customer_id'] = (int)$user['USER_ID'];
+                } elseif ($selected_role === 'restaurant') {
+                    $r_stmt = $conn->prepare("SELECT restaurant_id FROM restaurants WHERE user_id = :user_id");
+                    $r_stmt->execute(['user_id' => $user['USER_ID']]);
+                    $r_row = $r_stmt->fetch(PDO::FETCH_ASSOC);
+                    $_SESSION['restaurant_id'] = (int)$r_row['RESTAURANT_ID'];
+                } elseif ($selected_role === 'agent') {
+                    $a_stmt = $conn->prepare("SELECT agent_id FROM delivery_agents WHERE user_id = :user_id");
+                    $a_stmt->execute(['user_id' => $user['USER_ID']]);
+                    $a_row = $a_stmt->fetch(PDO::FETCH_ASSOC);
+                    $_SESSION['agent_id'] = (int)$a_row['AGENT_ID'];
+                }
+                
                 $authenticated = true;
+            } else {
+                $error = 'Invalid email, password, or role.';
             }
-        } elseif ($selected_role === 'customer') {
-            // Search customer in dummy data
-            foreach ($customers as $c) {
-                if ($c['email'] === $email && $c['password'] === $password) {
-                    $_SESSION['role'] = 'customer';
-                    $_SESSION['customer_id'] = $c['id'];
-                    $authenticated = true;
-                    break;
-                }
-            }
-        } elseif ($selected_role === 'restaurant') {
-            // Search restaurant in dummy data
-            foreach ($restaurants as $r) {
-                if ($r['email'] === $email && $r['password'] === $password) {
-                    $_SESSION['role'] = 'restaurant';
-                    $_SESSION['restaurant_id'] = $r['id'];
-                    $authenticated = true;
-                    break;
-                }
-            }
-        } elseif ($selected_role === 'agent') {
-            // Search agent in dummy data
-            foreach ($agents as $a) {
-                if ($a['email'] === $email && $a['password'] === $password) {
-                    $_SESSION['role'] = 'agent';
-                    $_SESSION['agent_id'] = $a['id'];
-                    $authenticated = true;
-                    break;
-                }
-            }
+        } catch (PDOException $ex) {
+            $error = 'Database Error: ' . $ex->getMessage();
         }
 
         if ($authenticated) {
@@ -96,6 +98,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
             exit;
         } else {
             $error = 'Invalid email, password, or incorrect portal selected.';
+        }
+    }
+}
+
+// Handle Registration Submit
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register'])) {
+    $name = trim($_POST['name']);
+    $email = trim($_POST['email']);
+    $password = trim($_POST['password']);
+    $phone = trim($_POST['phone']);
+    
+    if (empty($name) || empty($email) || empty($password) || empty($phone)) {
+        $error = 'Please fill in all registration fields.';
+    } else {
+        try {
+            // Get next user_id
+            $stmt = $conn->prepare("SELECT NVL(MAX(user_id), 0) + 1 FROM users");
+            $stmt->execute();
+            $new_user_id = $stmt->fetchColumn();
+            
+            // Call stored procedure to register user (role is always 'customer') using positional parameters
+            $stmt = $conn->prepare("CALL register_user(?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([
+                $new_user_id,
+                $name,
+                $email,
+                $password,
+                $phone,
+                'customer',
+                null
+            ]);
+            
+            set_flash('success', 'Registration successful! You can now log in.');
+            header('Location: index.php');
+            exit;
+        } catch (PDOException $ex) {
+            $error = 'Registration Failed: ' . $ex->getMessage();
         }
     }
 }
@@ -119,69 +158,9 @@ if (isset($_SESSION['role'])) {
     <title>FlameRoute — Login Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css">
     <style>
-        .login-layout {
-            display: flex;
-            min-height: 100vh;
-            background: var(--bg-primary);
-        }
-        .login-side-brand {
-            flex: 1.2;
-            background: linear-gradient(135deg, #FF6B2B, #e55a1b);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            padding: 4rem;
-            color: white;
-            position: relative;
-            overflow: hidden;
-        }
-        .login-side-brand::before {
-            content: '';
-            position: absolute;
-            width: 300px;
-            height: 300px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 50%;
-            top: -50px;
-            left: -50px;
-        }
-        .login-side-brand::after {
-            content: '';
-            position: absolute;
-            width: 500px;
-            height: 500px;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 50%;
-            bottom: -100px;
-            right: -100px;
-        }
-        .brand-title {
-            font-size: 3.5rem;
-            font-weight: 800;
-            line-height: 1.1;
-            margin-bottom: 1rem;
-            font-family: var(--font-heading);
-        }
-        .brand-desc {
-            font-size: 1.1rem;
-            opacity: 0.9;
-            max-width: 440px;
-        }
-        .login-side-form {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 2rem;
-            background: var(--bg-secondary);
-        }
-        .login-form-card {
-            width: 100%;
-            max-width: 420px;
-        }
         .portal-tabs {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -222,37 +201,22 @@ if (isset($_SESSION['role'])) {
             color: var(--text-primary);
             margin-bottom: 0.25rem;
         }
-        @media (max-width: 992px) {
-            .login-layout {
-                flex-direction: column;
-            }
-            .login-side-brand {
-                padding: 3rem 2rem;
-                flex: none;
-            }
-            .brand-title {
-                font-size: 2.2rem;
-            }
-            .login-side-form {
-                padding: 3rem 1.5rem;
-            }
-        }
     </style>
 </head>
 <body>
-    <div class="login-layout">
+    <div class="login-split-container">
         <!-- Left Banner -->
-        <div class="login-side-brand">
-            <span style="font-size: 3rem; margin-bottom: 1rem;">🔥</span>
-            <h1 class="brand-title">Flame<br>Route</h1>
-            <p class="brand-desc">Streamlining kitchen operations, dispatch routing, and premium food delivery logistics in one clean portal.</p>
+        <div class="login-split-hero">
+            <span style="font-size: 3rem; margin-bottom: 1.5rem; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));">🔥</span>
+            <h1 class="login-hero-title">FlameRoute</h1>
+            <p class="login-hero-desc">Streamlining kitchen operations, dispatch routing, and premium food delivery logistics in one clean, database-backed portal.</p>
         </div>
         
         <!-- Right Login Form -->
-        <div class="login-side-form">
+        <div class="login-split-form">
             <div class="login-form-card">
-                <h2 style="font-size: 1.75rem; font-weight: 800; margin-bottom: 0.5rem;">Account Sign In</h2>
-                <p class="text-secondary mb-3" style="font-size: 0.9rem;">Select your workspace portal to log in.</p>
+                <h2 id="formTitle" style="font-size: 1.75rem; font-weight: 800; margin-bottom: 0.5rem; font-family: var(--font-heading);">Account Sign In</h2>
+                <p id="formSubtitle" class="text-secondary mb-3" style="font-size: 0.9rem;">Select your workspace portal to log in.</p>
                 
                 <?= flash_html() ?>
                 
@@ -273,29 +237,68 @@ if (isset($_SESSION['role'])) {
                 <!-- Guided Demo Credentials Hint Box -->
                 <div class="guide-box" id="credentialsGuide">
                     <div class="guide-title">💡 Demo Customer Login</div>
-                    <div>Email: <strong class="text-accent">alice@example.com</strong></div>
-                    <div>Password: <strong class="text-accent">password</strong></div>
+                    <div>Email: <strong class="text-accent" style="color: var(--accent);">alice@example.com</strong></div>
+                    <div>Password: <strong class="text-accent" style="color: var(--accent);">password</strong></div>
                 </div>
 
-                <!-- Main Login Form -->
-                <form method="POST" action="index.php">
-                    <input type="hidden" name="login" value="1">
-                    <input type="hidden" name="role_select" id="selectedPortal" value="customer">
+                <!-- Login Form Wrapper -->
+                <div id="loginFormContainer">
+                    <form method="POST" action="index.php">
+                        <input type="hidden" name="login" value="1">
+                        <input type="hidden" name="role_select" id="selectedPortal" value="customer">
 
-                    <div class="form-group">
-                        <label class="form-label" id="emailLabel">Customer Email Address</label>
-                        <input type="email" name="email" id="emailInput" class="form-input" required placeholder="name@example.com">
+                        <div class="form-group">
+                            <label class="form-label" id="emailLabel">Customer Email Address</label>
+                            <input type="email" name="email" id="emailInput" class="form-input" required placeholder="name@example.com">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Password</label>
+                            <input type="password" name="password" class="form-input" required placeholder="••••••••">
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.8rem; justify-content: center; margin-top: 1.5rem; font-size: 0.95rem;">
+                            Sign In to Dashboard
+                        </button>
+                    </form>
+                    <div class="text-center" style="font-size: 0.88rem; margin-top: 1.5rem;">
+                        Don't have an account? <a href="#" onclick="showRegisterForm()" style="color: var(--accent); font-weight: 600;">Register here</a>
                     </div>
+                </div>
 
-                    <div class="form-group">
-                        <label class="form-label">Password</label>
-                        <input type="password" name="password" class="form-input" required placeholder="••••••••">
+                <!-- Register Form Wrapper -->
+                <div id="registerFormContainer" style="display: none;">
+                    <form method="POST" action="index.php">
+                        <input type="hidden" name="register" value="1">
+
+                        <div class="form-group">
+                            <label class="form-label">Full Name *</label>
+                            <input type="text" name="name" class="form-input" required placeholder="John Doe">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Email Address *</label>
+                            <input type="email" name="email" class="form-input" required placeholder="john@example.com">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Password *</label>
+                            <input type="password" name="password" class="form-input" required placeholder="••••••••">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Phone Contact *</label>
+                            <input type="text" name="phone" class="form-input" required placeholder="+1-555-0199">
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.8rem; justify-content: center; margin-top: 1.5rem; font-size: 0.95rem;">
+                            Create Customer Account
+                        </button>
+                    </form>
+                    <div class="text-center" style="font-size: 0.88rem; margin-top: 1.5rem;">
+                        Already have an account? <a href="#" onclick="showLoginForm()" style="color: var(--accent); font-weight: 600;">Sign in here</a>
                     </div>
-
-                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.8rem; justify-content: center; margin-top: 1rem; font-size: 0.95rem;">
-                        Sign In to Dashboard
-                    </button>
-                </form>
+                </div>
             </div>
         </div>
     </div>
@@ -333,28 +336,39 @@ if (isset($_SESSION['role'])) {
         };
 
         function switchPortal(portal) {
-            // Update active tab button style
             document.querySelectorAll('.portal-tab-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
             document.querySelector(`[data-portal="${portal}"]`).classList.add('active');
 
-            // Set hidden field value
             document.getElementById('selectedPortal').value = portal;
-
-            // Update email input label
             document.getElementById('emailLabel').textContent = demoCreds[portal].label;
-            
-            // Set input placeholder
             document.getElementById('emailInput').placeholder = demoCreds[portal].placeholder;
 
-            // Update demo credentials guide box
             const guide = demoCreds[portal];
             document.getElementById('credentialsGuide').innerHTML = `
                 <div class="guide-title">${guide.title}</div>
                 <div>Email: <strong class="text-accent">${guide.email}</strong></div>
                 <div>Password: <strong class="text-accent">${guide.pass}</strong></div>
             `;
+        }
+
+        function showRegisterForm() {
+            document.getElementById('loginFormContainer').style.display = 'none';
+            document.getElementById('registerFormContainer').style.display = 'block';
+            document.getElementById('credentialsGuide').style.display = 'none';
+            document.querySelector('.portal-tabs').style.display = 'none';
+            document.getElementById('formTitle').textContent = 'Account Registration';
+            document.getElementById('formSubtitle').textContent = 'Create a customer account to order food.';
+        }
+
+        function showLoginForm() {
+            document.getElementById('loginFormContainer').style.display = 'block';
+            document.getElementById('registerFormContainer').style.display = 'none';
+            document.getElementById('credentialsGuide').style.display = 'block';
+            document.querySelector('.portal-tabs').style.display = 'grid';
+            document.getElementById('formTitle').textContent = 'Account Sign In';
+            document.getElementById('formSubtitle').textContent = 'Select your workspace portal to log in.';
         }
     </script>
 </body>

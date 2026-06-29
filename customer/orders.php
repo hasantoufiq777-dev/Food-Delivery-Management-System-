@@ -16,24 +16,17 @@ $customer_id = $_SESSION['customer_id'];
 
 require_once __DIR__ . '/../includes/header.php';
 
-// Initialize session orders simulation if not set
-if (!isset($_SESSION['orders_sim'])) {
-    $_SESSION['orders_sim'] = $orders;
-}
-
-$my_orders = get_customer_orders($_SESSION['orders_sim'], $customer_id);
+// Load customer orders from database
+$my_orders = get_db_orders(['customer_id' => $customer_id]);
 
 // Check if viewing a specific order detail
 $view_order_id = isset($_GET['id']) ? (int)$_GET['id'] : null;
 $detail_order = null;
 
 if ($view_order_id) {
-    // Search in simulated orders
-    foreach ($_SESSION['orders_sim'] as $o) {
-        if ($o['id'] === $view_order_id && $o['customer_id'] === $customer_id) {
-            $detail_order = $o;
-            break;
-        }
+    $detail_order = get_db_order($view_order_id);
+    if ($detail_order && (int)$detail_order['customer_id'] !== $customer_id) {
+        $detail_order = null;
     }
 }
 

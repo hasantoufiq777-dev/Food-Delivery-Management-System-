@@ -19,15 +19,13 @@ if (!isset($_SESSION['agents_crud'])) {
 // Handle Delete Agent
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $original_count = count($_SESSION['agents_crud']);
-    $_SESSION['agents_crud'] = array_filter($_SESSION['agents_crud'], function($a) use ($id) {
-        return $a['id'] !== $id;
-    });
-    
-    if (count($_SESSION['agents_crud']) < $original_count) {
+    try {
+        // Delete from users table (cascades to delivery_agents due to ON DELETE CASCADE)
+        $stmt = $conn->prepare("DELETE FROM users WHERE user_id = (SELECT user_id FROM delivery_agents WHERE agent_id = :id)");
+        $stmt->execute(['id' => $id]);
         set_flash('success', 'Delivery Agent deleted successfully.');
-    } else {
-        set_flash('error', 'Agent not found.');
+    } catch (PDOException $ex) {
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
     header('Location: agents.php');
     exit;
@@ -44,33 +42,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_agent'])) {
     if (empty($name) || empty($phone) || empty($vehicle)) {
         set_flash('error', 'Please fill in all required fields.');
     } else {
-        if ($id === null) {
-            // Add New Agent
-            $new_id = count($_SESSION['agents_crud']) > 0 ? max(array_column($_SESSION['agents_crud'], 'id')) + 1 : 1;
-            $new_agent = [
-                'id' => $new_id,
-                'name' => $name,
-                'phone' => $phone,
-                'vehicle' => $vehicle,
-                'status' => $status ?: 'available',
-                'rating' => 5.0,
-                'deliveries_completed' => 0,
-                'created_at' => date('Y-m-d H:i:s')
-            ];
-            $_SESSION['agents_crud'][] = $new_agent;
-            set_flash('success', 'Agent added successfully.');
-        } else {
-            // Edit Agent
-            foreach ($_SESSION['agents_crud'] as &$a) {
-                if ($a['id'] === $id) {
-                    $a['name'] = $name;
-                    $a['phone'] = $phone;
-                    $a['vehicle'] = $vehicle;
-                    $a['status'] = $status;
-                    break;
-                }
+        try {
+            if ($id === null) {
+                // Add New Agent
+                $stmt = $conn->prepare("SELECT NVL(MAX(user_id), 0) + 1 FROM users");
+                $stmt->execute();
+                $new_user_id = $stmt->fetchColumn();
+                
+                // Call stored procedure to register user & initialize agent
+                $stmt = $conn->prepare("CALL register_user(:uid, :name, :email, :pass, :phone, 'agent', :vehicle)");
+                $email = strtolower(str_replace(' ', '', $name)) . '@example.com';
+                $stmt->execute([
+                    'uid' => $new_user_id,
+                    'name' => $name,
+                    'email' => $email,
+                    'pass' => 'password',
+                    'phone' => $phone,
+                    'vehicle' => $vehicle
+                ]);
+                set_flash('success', 'Agent added successfully.');
+            } else {
+                // Edit Agent
+                // 1. Update name & phone in users
+                $stmt = $conn->prepare("UPDATE users SET name = :name, phone = :phone WHERE user_id = (SELECT user_id FROM delivery_agents WHERE agent_id = :aid)");
+                $stmt->execute(['name' => $name, 'phone' => $phone, 'aid' => $id]);
+                
+                // 2. Update vehicle & status in delivery_agents
+                $stmt = $conn->prepare("UPDATE delivery_agents SET vehicle_type = :vehicle, status = :status WHERE agent_id = :aid");
+                $stmt->execute(['vehicle' => $vehicle, 'status' => $status, 'aid' => $id]);
+                
+                set_flash('success', 'Agent updated successfully.');
             }
-            set_flash('success', 'Agent updated successfully.');
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
         }
         header('Location: agents.php');
         exit;
@@ -82,28 +86,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_agent'])) {
     $order_id = (int)$_POST['order_id'];
     $agent_id = (int)$_POST['agent_id'];
     
-    // In real app, we would update orders database.
-    // For dummy purposes, let's store assignments in a session variable.
-    if (!isset($_SESSION['assigned_agents'])) {
-        $_SESSION['assigned_agents'] = [];
+    try {
+        $conn->beginTransaction();
+        
+        // 1. Assign courier & update order status to confirmed
+        $stmt = $conn->prepare("UPDATE orders SET agent_id = :aid, status = 'confirmed', updated_at = SYSDATE WHERE order_id = :oid");
+        $stmt->execute(['aid' => $agent_id, 'oid' => $order_id]);
+        
+        // 2. Mark agent status as busy
+        $stmt = $conn->prepare("UPDATE delivery_agents SET status = 'busy' WHERE agent_id = :aid");
+        $stmt->execute(['aid' => $agent_id]);
+        
+        // 3. Log confirmed status transition
+        $stmt = $conn->prepare("INSERT INTO order_status_history (history_id, order_id, status, changed_at, changed_by) 
+                                VALUES (NVL((SELECT MAX(history_id) FROM order_status_history), 0) + 1, :oid, 'confirmed', SYSDATE, 1)");
+        $stmt->execute(['oid' => $order_id]);
+        
+        $conn->commit();
+        unset($_SESSION['orders_sim']); // Clear cached orders
+        set_flash('success', 'Agent successfully assigned to Order #' . $order_id);
+    } catch (PDOException $ex) {
+        $conn->rollBack();
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
-    $_SESSION['assigned_agents'][$order_id] = $agent_id;
     
-    // Also update agent status to busy
-    foreach ($_SESSION['agents_crud'] as &$a) {
-        if ($a['id'] === $agent_id) {
-            $a['status'] = 'busy';
-            break;
-        }
-    }
-    
-    set_flash('success', 'Agent successfully assigned to Order #' . $order_id);
     header('Location: agents.php');
     exit;
 }
 
-// Get active items
-$current_agents = $_SESSION['agents_crud'];
+// Get active items from database
+$current_agents = get_db_agents();
 
 // Search Filter
 $search = $_GET['search'] ?? '';
@@ -120,14 +132,12 @@ $paginated_agents = $pagination['data'];
 $editing_agent = null;
 if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) {
     $edit_id = (int)$_GET['id'];
-    $editing_agent = find_by_id($_SESSION['agents_crud'], $edit_id);
+    $editing_agent = get_db_agent($edit_id);
 }
 
 // Find unassigned orders to support assign workflow
 $unassigned_orders = array_filter($orders, function($o) {
-    // Check if assigned in dummy data or session
-    $assigned_in_session = isset($_SESSION['assigned_agents'][$o['id']]);
-    return $o['agent_id'] === null && !$assigned_in_session && $o['status'] !== 'cancelled' && $o['status'] !== 'delivered';
+    return $o['agent_id'] === null && $o['status'] !== 'cancelled' && $o['status'] !== 'delivered';
 });
 ?>
 

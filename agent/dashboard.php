@@ -17,30 +17,10 @@ $agent_id = $_SESSION['agent_id'];
 require_once __DIR__ . '/../includes/header.php';
 
 // Find current agent
-$agent_obj = find_by_id($agents, $agent_id);
+$agent_obj = get_db_agent($agent_id);
 
-// Load orders assigned to this agent from simulated orders if set, otherwise fallback
-$all_orders = $_SESSION['orders_sim'] ?? $orders;
-
-// Check for newly assigned agent from the admin session simulation
-if (isset($_SESSION['assigned_agents'])) {
-    foreach ($_SESSION['assigned_agents'] as $ord_id => $ag_id) {
-        if ($ag_id == $agent_id) {
-            // Update local copy of order list to reflect assignment simulation
-            foreach ($all_orders as &$o) {
-                if ($o['id'] == $ord_id) {
-                    $o['agent_id'] = $agent_id;
-                    // Auto advance status to confirmed if it was placed
-                    if ($o['status'] === 'placed') {
-                        $o['status'] = 'confirmed';
-                    }
-                }
-            }
-        }
-    }
-}
-
-$my_deliveries = get_agent_orders($all_orders, $agent_id);
+// Load orders assigned to this agent from database
+$my_deliveries = get_db_orders(['agent_id' => $agent_id]);
 
 // Separate active vs completed
 $active_deliveries = array_filter($my_deliveries, function($d) {

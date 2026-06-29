@@ -19,44 +19,41 @@ if (isset($_GET['action']) && isset($_GET['item_id'])) {
     $action = $_GET['action'];
     $item_id = (int)$_GET['item_id'];
     
-    if (isset($_SESSION['cart']) && !empty($_SESSION['cart']['items'])) {
-        foreach ($_SESSION['cart']['items'] as $index => &$ci) {
-            if ($ci['menu_item_id'] === $item_id) {
-                if ($action === 'inc') {
-                    $ci['quantity']++;
-                } elseif ($action === 'dec') {
-                    $ci['quantity']--;
-                    if ($ci['quantity'] <= 0) {
-                        unset($_SESSION['cart']['items'][$index]);
-                    }
-                } elseif ($action === 'remove') {
-                    unset($_SESSION['cart']['items'][$index]);
-                }
-                break;
-            }
+    $cart = get_db_cart($_SESSION['customer_id']);
+    
+    $current_qty = 0;
+    foreach ($cart['items'] as $item) {
+        if ((int)$item['menu_item_id'] === $item_id) {
+            $current_qty = (int)$item['quantity'];
+            break;
         }
-        
-        // Re-index array
-        $_SESSION['cart']['items'] = array_values($_SESSION['cart']['items']);
-        
-        // Recalculate totals
-        if (empty($_SESSION['cart']['items'])) {
-            $_SESSION['cart'] = $default_cart;
-            set_flash('success', 'Cart emptied.');
-        } else {
-            $subtotal = 0;
-            foreach ($_SESSION['cart']['items'] as $ci) {
-                $subtotal += $ci['price'] * $ci['quantity'];
+    }
+    
+    try {
+        if ($action === 'inc') {
+            $stmt = $conn->prepare("CALL add_to_cart(:cid, :iid, 1)");
+            $stmt->execute(['cid' => $_SESSION['customer_id'], 'iid' => $item_id]);
+        } elseif ($action === 'dec') {
+            if ($current_qty <= 1) {
+                $stmt = $conn->prepare("DELETE FROM cart_items WHERE cart_id = (SELECT cart_id FROM carts WHERE customer_id = :cid) AND item_id = :iid");
+                $stmt->execute(['cid' => $_SESSION['customer_id'], 'iid' => $item_id]);
+            } else {
+                $stmt = $conn->prepare("CALL add_to_cart(:cid, :iid, -1)");
+                $stmt->execute(['cid' => $_SESSION['customer_id'], 'iid' => $item_id]);
             }
-            $_SESSION['cart']['subtotal'] = $subtotal;
-            $_SESSION['cart']['total'] = $subtotal + $_SESSION['cart']['delivery_fee'];
+        } elseif ($action === 'remove') {
+            $stmt = $conn->prepare("DELETE FROM cart_items WHERE cart_id = (SELECT cart_id FROM carts WHERE customer_id = :cid) AND item_id = :iid");
+            $stmt->execute(['cid' => $_SESSION['customer_id'], 'iid' => $item_id]);
         }
+        set_flash('success', 'Cart updated.');
+    } catch (PDOException $ex) {
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
     header('Location: cart.php');
     exit;
 }
 
-$cart = $_SESSION['cart'] ?? $default_cart;
+$cart = get_db_cart($_SESSION['customer_id']);
 $restaurant = $cart['restaurant_id'] ? find_by_id($restaurants, $cart['restaurant_id']) : null;
 ?>
 
@@ -77,7 +74,7 @@ $restaurant = $cart['restaurant_id'] ? find_by_id($restaurants, $cart['restauran
         </div>
     </div>
 <?php else: ?>
-    <div class="two-col">
+    <div class="cart-layout">
         <!-- Cart Items List -->
         <div class="card">
             <div class="card-header">
@@ -112,7 +109,7 @@ $restaurant = $cart['restaurant_id'] ? find_by_id($restaurants, $cart['restauran
         </div>
 
         <!-- Summary & Checkout card -->
-        <div class="cart-summary">
+        <div class="cart-summary sticky-summary">
             <h3 class="cart-summary-title">Order Summary</h3>
             <div class="summary-row">
                 <span>Subtotal</span>
@@ -122,7 +119,7 @@ $restaurant = $cart['restaurant_id'] ? find_by_id($restaurants, $cart['restauran
                 <span>Delivery Fee</span>
                 <span class="summary-value"><?= format_price($cart['delivery_fee']) ?></span>
             </div>
-            <div class="summary-row total">
+            <div class="summary-row total" style="border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
                 <span>Total Amount</span>
                 <span class="summary-value"><?= format_price($cart['total']) ?></span>
             </div>

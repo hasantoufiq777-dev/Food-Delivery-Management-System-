@@ -41,6 +41,9 @@ $daily_orders = [
         <h1 class="page-title">Admin Dashboard</h1>
         <p class="page-subtitle">Platform Analytics & Management Overview</p>
     </div>
+    <div>
+        <a href="?clear_orders=true" class="btn btn-secondary btn-sm" onclick="return confirm('Are you sure you want to clear all simulated orders?');">Clear Simulated Orders</a>
+    </div>
 </div>
 
 <!-- Stats Grid -->

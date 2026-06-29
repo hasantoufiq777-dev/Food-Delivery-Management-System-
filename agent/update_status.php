@@ -16,12 +16,7 @@ $agent_id = $_SESSION['agent_id'];
 
 require_once __DIR__ . '/../includes/header.php';
 
-// Initialize session orders store if not set
-if (!isset($_SESSION['orders_sim'])) {
-    $_SESSION['orders_sim'] = $orders;
-}
-
-// ─── Handle status updates ───────────────────────────────────────
+// Handle status updates
 if (isset($_GET['action']) && isset($_GET['order_id'])) {
     $order_id = (int)$_GET['order_id'];
     $action = $_GET['action'];
@@ -33,53 +28,34 @@ if (isset($_GET['action']) && isset($_GET['order_id'])) {
     
     if (isset($valid_actions[$action])) {
         $new_status = $valid_actions[$action];
-        foreach ($_SESSION['orders_sim'] as &$o) {
-            if ($o['id'] == $order_id && ($o['agent_id'] == $agent_id || (isset($_SESSION['assigned_agents'][$o['id']]) && $_SESSION['assigned_agents'][$o['id']] == $agent_id))) {
-                $o['status'] = $new_status;
-                if ($new_status === 'delivered') {
-                    $o['delivered_at'] = date('Y-m-d H:i:s');
-                    
-                    // Release agent status back to available
-                    if (isset($_SESSION['agents_crud'])) {
-                        foreach ($_SESSION['agents_crud'] as &$a) {
-                            if ($a['id'] == $agent_id) {
-                                $a['status'] = 'available';
-                                $a['deliveries_completed']++;
-                                break;
-                            }
-                        }
-                    }
-                }
-                set_flash('success', 'Order #' . $order_id . ' is now ' . str_replace('_', ' ', $new_status) . '.');
-                break;
-            }
+        try {
+            // Get user_id for this agent
+            $a_stmt = $conn->prepare("SELECT user_id FROM delivery_agents WHERE agent_id = :aid");
+            $a_stmt->execute(['aid' => $agent_id]);
+            $user_id = $a_stmt->fetchColumn();
+            
+            // Call stored procedure
+            $stmt = $conn->prepare("CALL update_order_status(:oid, :status, :changed_by)");
+            $stmt->execute([
+                'oid' => $order_id,
+                'status' => $new_status,
+                'changed_by' => $user_id
+            ]);
+            
+            unset($_SESSION['orders_sim']); // Purge global simulation orders cache
+            set_flash('success', 'Order #' . $order_id . ' is now ' . str_replace('_', ' ', $new_status) . '.');
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
         }
     }
     header('Location: update_status.php');
     exit;
 }
 
-// Load active orders assigned to agent
-$all_orders = $_SESSION['orders_sim'];
-
-// Inject active session assignments
-if (isset($_SESSION['assigned_agents'])) {
-    foreach ($_SESSION['assigned_agents'] as $ord_id => $ag_id) {
-        if ($ag_id == $agent_id) {
-            foreach ($all_orders as &$o) {
-                if ($o['id'] == $ord_id) {
-                    $o['agent_id'] = $agent_id;
-                }
-            }
-        }
-    }
-}
-
-// Filter down to agent active delivery orders
-$my_active = array_filter($all_orders, function($o) use ($agent_id) {
-    $is_assigned = $o['agent_id'] == $agent_id;
-    $is_active = in_array($o['status'], ['confirmed', 'preparing', 'ready', 'out_for_delivery']);
-    return $is_assigned && $is_active;
+// Load active orders assigned to agent from database
+$all_my_orders = get_db_orders(['agent_id' => $agent_id]);
+$my_active = array_filter($all_my_orders, function($o) {
+    return in_array($o['status'], ['confirmed', 'preparing', 'ready', 'out_for_delivery']);
 });
 
 // Sort active newest first

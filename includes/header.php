@@ -3,6 +3,7 @@
  * Header Include
  * Food Delivery Management System
  */
+ob_start();
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -14,7 +15,37 @@ if (!isset($_SESSION['role'])) {
 }
 
 require_once __DIR__ . '/../config/dummy_data.php';
+require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/functions.php';
+
+// Initialize global database connection
+try {
+    $conn = get_db_connection_pdo();
+} catch (PDOException $e) {
+    die("Database Connection Failed: " . $e->getMessage());
+}
+
+// Load global arrays from Oracle Database
+$restaurants = get_db_restaurants();
+$menu_items = get_db_menu_items();
+$agents = get_db_agents();
+$customers = get_db_customers();
+
+// Clear orders simulation if requested by admin
+if (isset($_GET['clear_orders']) && $_GET['clear_orders'] === 'true' && isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+    $_SESSION['orders_sim'] = [];
+    $_SESSION['restaurant_orders_sim'] = [];
+    
+    $current_page = strtok($_SERVER["REQUEST_URI"], '?');
+    header('Location: ' . $current_page);
+    exit;
+}
+
+// Sync global $orders with session simulation or DB
+if (!isset($_SESSION['orders_sim'])) {
+    $_SESSION['orders_sim'] = get_db_orders();
+}
+$orders = &$_SESSION['orders_sim'];
 
 $current_role = $_SESSION['role'];
 $current_user_id = get_current_user_id();
@@ -103,9 +134,12 @@ if ($current_role === 'customer') {
 
 // Cart count for customer
 $cart_count = 0;
-if (isset($_SESSION['cart']) && !empty($_SESSION['cart']['items'])) {
-    foreach ($_SESSION['cart']['items'] as $ci) {
-        $cart_count += $ci['quantity'];
+if ($current_role === 'customer' && isset($_SESSION['customer_id'])) {
+    $cart = get_db_cart($_SESSION['customer_id']);
+    if ($cart && !empty($cart['items'])) {
+        foreach ($cart['items'] as $ci) {
+            $cart_count += (int)$ci['quantity'];
+        }
     }
 }
 
@@ -121,7 +155,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
     <title>FlameRoute — Food Delivery Management</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css">
     <script>
         window.BASE_URL = '<?= BASE_URL ?>';
@@ -146,7 +180,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
         </div>
 
         <!-- Role Switcher -->
-        <?php if ($current_role === 'admin' || (isset($_SESSION['is_admin']) && $_SESSION['is_admin'])): ?>
+        <?php if ($current_role !== 'admin' && isset($_SESSION['is_admin']) && $_SESSION['is_admin']): ?>
         <div class="role-switcher">
             <label class="role-switcher-label">Demo Role Switcher</label>
             <form method="POST" action="<?= BASE_URL ?>index.php" id="roleSwitchForm">

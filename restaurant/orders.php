@@ -16,10 +16,8 @@ $restaurant_id = $_SESSION['restaurant_id'];
 
 require_once __DIR__ . '/../includes/header.php';
 
-// Initialize session orders store for simulation if not set
-if (!isset($_SESSION['restaurant_orders_sim'])) {
-    $_SESSION['restaurant_orders_sim'] = get_restaurant_orders($orders, $restaurant_id);
-}
+// Load orders from database
+$current_orders = get_db_orders(['restaurant_id' => $restaurant_id]);
 
 // Handle Status Updates (Accept, Prepare, Ready)
 if (isset($_GET['action']) && isset($_GET['order_id'])) {
@@ -34,19 +32,29 @@ if (isset($_GET['action']) && isset($_GET['order_id'])) {
     
     if (isset($valid_actions[$action])) {
         $new_status = $valid_actions[$action];
-        foreach ($_SESSION['restaurant_orders_sim'] as &$o) {
-            if ($o['id'] == $order_id) {
-                $o['status'] = $new_status;
-                set_flash('success', 'Order #' . $order_id . ' status updated to ' . ucfirst($new_status));
-                break;
-            }
+        try {
+            // Get user_id for this restaurant
+            $r_stmt = $conn->prepare("SELECT user_id FROM restaurants WHERE restaurant_id = :rid");
+            $r_stmt->execute(['rid' => $restaurant_id]);
+            $user_id = $r_stmt->fetchColumn();
+            
+            // Call stored procedure
+            $stmt = $conn->prepare("CALL update_order_status(:oid, :status, :changed_by)");
+            $stmt->execute([
+                'oid' => $order_id,
+                'status' => $new_status,
+                'changed_by' => $user_id
+            ]);
+            
+            unset($_SESSION['orders_sim']); // Purge global simulation orders cache
+            set_flash('success', 'Order #' . $order_id . ' status updated to ' . ucfirst($new_status));
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
         }
     }
     header('Location: orders.php');
     exit;
 }
-
-$current_orders = $_SESSION['restaurant_orders_sim'];
 
 // Apply Search and Status Filter
 $search = $_GET['search'] ?? '';

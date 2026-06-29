@@ -29,9 +29,11 @@ $detail_customer = null;
 $customer_orders = [];
 if (isset($_GET['view_history']) && $_GET['view_history'] !== '') {
     $view_id = (int)$_GET['view_history'];
-    $detail_customer = find_by_id($customers, $view_id);
+    $detail_customer = get_db_customer($view_id);
     if ($detail_customer) {
-        $customer_orders = get_customer_orders($orders, $view_id);
+        $customer_orders = get_db_orders(['customer_id' => $view_id]);
+        $detail_customer['address'] = !empty($customer_orders) ? $customer_orders[0]['delivery_address'] : 'No address on file';
+        
         // Sort newest first
         usort($customer_orders, function($a, $b) {
             return strcmp($b['created_at'], $a['created_at']);

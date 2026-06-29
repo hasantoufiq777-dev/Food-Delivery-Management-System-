@@ -14,58 +14,33 @@ if (!isset($_SESSION['customer_id'])) {
 
 require_once __DIR__ . '/../includes/header.php';
 
-// Initialize session store for menu items if not set
-if (!isset($_SESSION['menu_items_crud'])) {
-    $_SESSION['menu_items_crud'] = $menu_items;
-}
 
-// ─── Handle Add To Cart ──────────────────────────────────────────
+//  Handle Add To Cart 
 if (isset($_GET['add_to_cart']) && isset($_GET['restaurant_id'])) {
     $item_id = (int)$_GET['add_to_cart'];
     $rest_id = (int)$_GET['restaurant_id'];
     
-    // Initialize cart in session if not exists
-    if (!isset($_SESSION['cart'])) {
-        $_SESSION['cart'] = $default_cart;
-    }
+    // Get database cart
+    $cart = get_db_cart($_SESSION['customer_id']);
     
     // Check if cart already has items from another restaurant
-    if ($_SESSION['cart']['restaurant_id'] !== null && $_SESSION['cart']['restaurant_id'] !== $rest_id) {
+    if ($cart['restaurant_id'] !== null && (int)$cart['restaurant_id'] !== $rest_id) {
         set_flash('error', 'Your cart contains items from another restaurant. Please empty your cart first.');
     } else {
         // Find item details
-        $item = find_by_id($_SESSION['menu_items_crud'], $item_id);
+        $item = get_db_menu_item($item_id);
         if ($item && $item['available']) {
-            $_SESSION['cart']['restaurant_id'] = $rest_id;
-            
-            // If item already in cart, increment quantity
-            $found = false;
-            foreach ($_SESSION['cart']['items'] as &$ci) {
-                if ($ci['menu_item_id'] === $item_id) {
-                    $ci['quantity']++;
-                    $found = true;
-                    break;
-                }
+            try {
+                // Call stored procedure
+                $stmt = $conn->prepare("CALL add_to_cart(:cid, :iid, 1)");
+                $stmt->execute([
+                    'cid' => $_SESSION['customer_id'],
+                    'iid' => $item_id
+                ]);
+                set_flash('success', '"' . $item['name'] . '" added to cart.');
+            } catch (PDOException $ex) {
+                set_flash('error', 'Database Error: ' . $ex->getMessage());
             }
-            
-            if (!$found) {
-                $_SESSION['cart']['items'][] = [
-                    'menu_item_id' => $item['id'],
-                    'name' => $item['name'],
-                    'price' => $item['price'],
-                    'quantity' => 1
-                ];
-            }
-            
-            // Recalculate totals
-            $subtotal = 0;
-            foreach ($_SESSION['cart']['items'] as $ci) {
-                $subtotal += $ci['price'] * $ci['quantity'];
-            }
-            $_SESSION['cart']['subtotal'] = $subtotal;
-            $_SESSION['cart']['total'] = $subtotal + $_SESSION['cart']['delivery_fee'];
-            
-            set_flash('success', '"' . $item['name'] . '" added to cart.');
         } else {
             set_flash('error', 'Item is not available.');
         }
@@ -93,7 +68,7 @@ if ($view_restaurant_id) {
     }
     
     // Get menu items of this restaurant
-    $restaurant_menu = array_filter($_SESSION['menu_items_crud'], function($m) use ($view_restaurant_id) {
+    $restaurant_menu = array_filter($menu_items, function($m) use ($view_restaurant_id) {
         return $m['restaurant_id'] == $view_restaurant_id;
     });
     
@@ -123,7 +98,7 @@ if ($view_restaurant_id) {
         <a href="browse.php?view_menu_id=<?= $view_restaurant_id ?>" class="category-pill <?= $menu_cat_filter === '' ? 'active' : '' ?>">All Dishes</a>
         <?php foreach ($menu_categories as $cat): 
             // Only show category if restaurant has items in it
-            $has_items = count(array_filter($_SESSION['menu_items_crud'], function($m) use ($view_restaurant_id, $cat) {
+            $has_items = count(array_filter($menu_items, function($m) use ($view_restaurant_id, $cat) {
                 return $m['restaurant_id'] == $view_restaurant_id && $m['category'] === $cat;
             })) > 0;
             if ($has_items):

@@ -5,7 +5,7 @@ CREATE TABLE users (
     email VARCHAR2(150) UNIQUE NOT NULL,
     password_hash VARCHAR2(255) NOT NULL,
     phone VARCHAR2(20),
-    role VARCHAR2(20) NOT NULL, -- 'admin', 'customer', 'restaurant', 'agent'
+    role VARCHAR2(20) NOT NULL, 
     created_at DATE DEFAULT SYSDATE
 );
 

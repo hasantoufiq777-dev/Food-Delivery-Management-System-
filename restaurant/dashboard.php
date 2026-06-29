@@ -20,14 +20,8 @@ require_once __DIR__ . '/../includes/header.php';
 // Find current restaurant
 $restaurant = find_by_id($restaurants, $restaurant_id);
 
-// Load restaurant specific orders
-$restaurant_orders = get_restaurant_orders($orders, $restaurant_id);
-
-// If user performed quick updates via session store simulation
-if (!isset($_SESSION['restaurant_orders_sim'])) {
-    $_SESSION['restaurant_orders_sim'] = $restaurant_orders;
-}
-$current_orders = $_SESSION['restaurant_orders_sim'];
+// Load restaurant specific orders from database
+$current_orders = get_db_orders(['restaurant_id' => $restaurant_id]);
 
 // Today's metrics (Simulation on order list)
 $incoming_orders_count = count(array_filter($current_orders, function($o) {

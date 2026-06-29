@@ -16,25 +16,15 @@ $restaurant_id = $_SESSION['restaurant_id'];
 
 require_once __DIR__ . '/../includes/header.php';
 
-// Initialize session store for menu items if not set
-if (!isset($_SESSION['menu_items_crud'])) {
-    $_SESSION['menu_items_crud'] = $menu_items;
-}
-
 // Handle Delete Request
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $original_count = count($_SESSION['menu_items_crud']);
-    
-    $_SESSION['menu_items_crud'] = array_filter($_SESSION['menu_items_crud'], function($m) use ($id, $restaurant_id) {
-        // Only allow deleting dishes belonging to this restaurant
-        return !($m['id'] === $id && $m['restaurant_id'] == $restaurant_id);
-    });
-    
-    if (count($_SESSION['menu_items_crud']) < $original_count) {
+    try {
+        $stmt = $conn->prepare("DELETE FROM menu_items WHERE item_id = :id AND restaurant_id = :rid");
+        $stmt->execute(['id' => $id, 'rid' => $restaurant_id]);
         set_flash('success', 'Menu item deleted successfully.');
-    } else {
-        set_flash('error', 'Menu item not found.');
+    } catch (PDOException $ex) {
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
     header('Location: menu.php');
     exit;
@@ -43,12 +33,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
 // Handle Toggle Availability
 if (isset($_GET['action']) && $_GET['action'] === 'toggle' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    foreach ($_SESSION['menu_items_crud'] as &$m) {
-        if ($m['id'] === $id && $m['restaurant_id'] == $restaurant_id) {
-            $m['available'] = !$m['available'];
-            set_flash('success', 'Dish availability updated.');
-            break;
-        }
+    try {
+        $stmt = $conn->prepare("UPDATE menu_items SET is_available = CASE WHEN is_available = 1 THEN 0 ELSE 1 END WHERE item_id = :id AND restaurant_id = :rid");
+        $stmt->execute(['id' => $id, 'rid' => $restaurant_id]);
+        set_flash('success', 'Dish availability updated.');
+    } catch (PDOException $ex) {
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
     header('Location: menu.php');
     exit;
@@ -62,52 +52,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_menu_item'])) {
     $price = (float)$_POST['price'];
     $category = trim($_POST['category']);
     $image_url = trim($_POST['image_url']);
-    $available = isset($_POST['available']) ? true : false;
+    $available = isset($_POST['available']) ? 1 : 0;
     
     if (empty($name) || empty($category) || $price <= 0) {
         set_flash('error', 'Please fill in all required fields and input a valid price.');
     } else {
-        if ($id === null) {
-            // Add New Menu Item
-            $new_id = count($_SESSION['menu_items_crud']) > 0 ? max(array_column($_SESSION['menu_items_crud'], 'id')) + 1 : 1;
-            $new_item = [
-                'id' => $new_id,
-                'restaurant_id' => $restaurant_id,
-                'name' => $name,
-                'price' => $price,
-                'category' => $category,
-                'description' => $description,
-                'image_url' => $image_url ?: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&h=200&fit=crop',
-                'available' => $available
-            ];
-            $_SESSION['menu_items_crud'][] = $new_item;
-            set_flash('success', 'New dish added to menu successfully.');
-        } else {
-            // Edit Menu Item
-            foreach ($_SESSION['menu_items_crud'] as &$m) {
-                if ($m['id'] === $id && $m['restaurant_id'] == $restaurant_id) {
-                    $m['name'] = $name;
-                    $m['description'] = $description;
-                    $m['price'] = $price;
-                    $m['category'] = $category;
-                    if ($image_url !== '') {
-                        $m['image_url'] = $image_url;
-                    }
-                    $m['available'] = $available;
-                    break;
-                }
+        try {
+            if ($id === null) {
+                // Add New Menu Item
+                $stmt = $conn->prepare("SELECT NVL(MAX(item_id), 0) + 1 FROM menu_items");
+                $stmt->execute();
+                $new_id = $stmt->fetchColumn();
+                
+                $img = $image_url ?: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&h=200&fit=crop';
+                
+                $stmt = $conn->prepare("INSERT INTO menu_items (item_id, restaurant_id, name, description, price, category, image_url, is_available) 
+                                        VALUES (:id, :rid, :name, :desc, :price, :cat, :img, :avail)");
+                $stmt->execute([
+                    'id' => $new_id,
+                    'rid' => $restaurant_id,
+                    'name' => $name,
+                    'desc' => $description,
+                    'price' => $price,
+                    'cat' => $category,
+                    'img' => $img,
+                    'avail' => $available
+                ]);
+                set_flash('success', 'New dish added to menu successfully.');
+            } else {
+                // Edit Menu Item
+                $img = $image_url ?: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=300&h=200&fit=crop';
+                
+                $stmt = $conn->prepare("UPDATE menu_items SET name = :name, description = :desc, price = :price, category = :cat, image_url = :img, is_available = :avail 
+                                        WHERE item_id = :id AND restaurant_id = :rid");
+                $stmt->execute([
+                    'name' => $name,
+                    'desc' => $description,
+                    'price' => $price,
+                    'cat' => $category,
+                    'img' => $img,
+                    'avail' => $available,
+                    'id' => $id,
+                    'rid' => $restaurant_id
+                ]);
+                set_flash('success', 'Dish updated successfully.');
             }
-            set_flash('success', 'Dish updated successfully.');
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
         }
         header('Location: menu.php');
         exit;
     }
 }
 
-// Fetch menu items for this restaurant
-$this_menu = array_filter($_SESSION['menu_items_crud'], function($m) use ($restaurant_id) {
-    return $m['restaurant_id'] == $restaurant_id;
-});
+// Fetch menu items for this restaurant from database
+$this_menu = get_db_menu_items($restaurant_id);
 
 // Search and Category filters
 $search = $_GET['search'] ?? '';
@@ -129,8 +128,8 @@ $paginated_menu = $pagination['data'];
 $editing_item = null;
 if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) {
     $edit_id = (int)$_GET['id'];
-    $editing_item = find_by_id($_SESSION['menu_items_crud'], $edit_id);
-    if ($editing_item && $editing_item['restaurant_id'] != $restaurant_id) {
+    $editing_item = get_db_menu_item($edit_id);
+    if ($editing_item && (int)$editing_item['restaurant_id'] !== (int)$restaurant_id) {
         $editing_item = null; // Prevent editing other restaurants' menu
     }
 }

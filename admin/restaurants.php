@@ -21,15 +21,13 @@ $message_action = '';
 // Handle Delete Request
 if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $original_count = count($_SESSION['restaurants_crud']);
-    $_SESSION['restaurants_crud'] = array_filter($_SESSION['restaurants_crud'], function($r) use ($id) {
-        return $r['id'] !== $id;
-    });
-    
-    if (count($_SESSION['restaurants_crud']) < $original_count) {
+    try {
+        // Delete user (cascades to restaurants due to ON DELETE CASCADE)
+        $stmt = $conn->prepare("DELETE FROM users WHERE user_id = (SELECT user_id FROM restaurants WHERE restaurant_id = :rid)");
+        $stmt->execute(['rid' => $id]);
         set_flash('success', 'Restaurant deleted successfully.');
-    } else {
-        set_flash('error', 'Restaurant not found.');
+    } catch (PDOException $ex) {
+        set_flash('error', 'Database Error: ' . $ex->getMessage());
     }
     header('Location: restaurants.php');
     exit;
@@ -48,46 +46,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_restaurant'])) {
     if (empty($name) || empty($cuisine) || empty($address)) {
         set_flash('error', 'Please fill in all required fields.');
     } else {
-        if ($id === null) {
-            // Add New
-            $new_id = count($_SESSION['restaurants_crud']) > 0 ? max(array_column($_SESSION['restaurants_crud'], 'id')) + 1 : 1;
-            $new_rest = [
-                'id' => $new_id,
-                'name' => $name,
-                'cuisine' => $cuisine,
-                'rating' => $rating ?: 4.5,
-                'address' => $address,
-                'phone' => $phone,
-                'image_url' => $image_url ?: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&h=300&fit=crop',
-                'status' => 'active',
-                'created_at' => date('Y-m-d H:i:s')
-            ];
-            $_SESSION['restaurants_crud'][] = $new_rest;
-            set_flash('success', 'Restaurant added successfully.');
-        } else {
-            // Edit Existing
-            foreach ($_SESSION['restaurants_crud'] as &$r) {
-                if ($r['id'] === $id) {
-                    $r['name'] = $name;
-                    $r['cuisine'] = $cuisine;
-                    $r['address'] = $address;
-                    $r['phone'] = $phone;
-                    $r['rating'] = $rating;
-                    if ($image_url !== '') {
-                        $r['image_url'] = $image_url;
-                    }
-                    break;
-                }
+        try {
+            $img = $image_url ?: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&h=300&fit=crop';
+            if ($id === null) {
+                // Add New Restaurant
+                // 1. Create User
+                $stmt = $conn->prepare("SELECT NVL(MAX(user_id), 0) + 1 FROM users");
+                $stmt->execute();
+                $new_user_id = $stmt->fetchColumn();
+                
+                $email = strtolower(str_replace(' ', '', $name)) . '@example.com';
+                $stmt = $conn->prepare("CALL register_user(:uid, :name, :email, 'password', :phone, 'restaurant', NULL)");
+                $stmt->execute([
+                    'uid' => $new_user_id,
+                    'name' => $name,
+                    'email' => $email,
+                    'phone' => $phone
+                ]);
+                
+                // 2. Create Restaurant mapping
+                $stmt = $conn->prepare("SELECT NVL(MAX(restaurant_id), 0) + 1 FROM restaurants");
+                $stmt->execute();
+                $new_rest_id = $stmt->fetchColumn();
+                
+                $stmt = $conn->prepare("INSERT INTO restaurants (restaurant_id, user_id, name, address, cuisine_type, rating, status, image_url) 
+                                        VALUES (:rid, :uid, :name, :address, :cuisine, :rating, 'active', :img)");
+                $stmt->execute([
+                    'rid' => $new_rest_id,
+                    'uid' => $new_user_id,
+                    'name' => $name,
+                    'address' => $address,
+                    'cuisine' => $cuisine,
+                    'rating' => $rating ?: 4.5,
+                    'img' => $img
+                ]);
+                set_flash('success', 'Restaurant added successfully.');
+            } else {
+                // Edit Restaurant
+                // 1. Update User details
+                $stmt = $conn->prepare("UPDATE users SET name = :name, phone = :phone WHERE user_id = (SELECT user_id FROM restaurants WHERE restaurant_id = :rid)");
+                $stmt->execute(['name' => $name, 'phone' => $phone, 'rid' => $id]);
+                
+                // 2. Update Restaurant details
+                $stmt = $conn->prepare("UPDATE restaurants SET name = :name, address = :address, cuisine_type = :cuisine, rating = :rating, image_url = :img 
+                                        WHERE restaurant_id = :rid");
+                $stmt->execute([
+                    'name' => $name,
+                    'address' => $address,
+                    'cuisine' => $cuisine,
+                    'rating' => $rating,
+                    'img' => $img,
+                    'rid' => $id
+                ]);
+                set_flash('success', 'Restaurant updated successfully.');
             }
-            set_flash('success', 'Restaurant updated successfully.');
+        } catch (PDOException $ex) {
+            set_flash('error', 'Database Error: ' . $ex->getMessage());
         }
         header('Location: restaurants.php');
         exit;
     }
 }
 
-// Get active items
-$current_restaurants = $_SESSION['restaurants_crud'];
+// Get active items from database
+$current_restaurants = get_db_restaurants();
 
 // Search Filter
 $search = $_GET['search'] ?? '';
@@ -104,7 +126,7 @@ $paginated_restaurants = $pagination['data'];
 $editing_rest = null;
 if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) {
     $edit_id = (int)$_GET['id'];
-    $editing_rest = find_by_id($_SESSION['restaurants_crud'], $edit_id);
+    $editing_rest = get_db_restaurant($edit_id);
 }
 ?>
 

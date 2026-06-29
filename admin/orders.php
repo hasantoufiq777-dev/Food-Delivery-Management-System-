@@ -51,6 +51,9 @@ $paginated_orders = $pagination['data'];
         <h1 class="page-title">Manage Orders</h1>
         <p class="page-subtitle">View and filter all system orders</p>
     </div>
+    <div>
+        <a href="?clear_orders=true" class="btn btn-secondary btn-sm" onclick="return confirm('Are you sure you want to clear all simulated orders?');">Clear Simulated Orders</a>
+    </div>
 </div>
 
 <!-- Filter and Search Bar -->
