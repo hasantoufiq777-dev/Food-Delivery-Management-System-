@@ -179,21 +179,7 @@ $current_page = basename($_SERVER['PHP_SELF']);
             </a>
         </div>
 
-        <!-- Role Switcher -->
-        <?php if ($current_role !== 'admin' && isset($_SESSION['is_admin']) && $_SESSION['is_admin']): ?>
-        <div class="role-switcher">
-            <label class="role-switcher-label">Demo Role Switcher</label>
-            <form method="POST" action="<?= BASE_URL ?>index.php" id="roleSwitchForm">
-                <select name="role" class="role-select" onchange="this.form.submit()">
-                    <option value="admin" <?= $current_role === 'admin' ? 'selected' : '' ?>>🛡️ Admin</option>
-                    <option value="restaurant" <?= $current_role === 'restaurant' ? 'selected' : '' ?>>🍽️ Restaurant</option>
-                    <option value="customer" <?= $current_role === 'customer' ? 'selected' : '' ?>>👤 Customer</option>
-                    <option value="agent" <?= $current_role === 'agent' ? 'selected' : '' ?>>🚗 Agent</option>
-                </select>
-                <input type="hidden" name="switch_role" value="1">
-            </form>
-        </div>
-        <?php endif; ?>
+
 
         <!-- Navigation -->
         <nav class="sidebar-nav">

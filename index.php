@@ -234,13 +234,6 @@ if (isset($_SESSION['role'])) {
                     <button type="button" class="portal-tab-btn" data-portal="admin" onclick="switchPortal('admin')">🛡️ Admin</button>
                 </div>
 
-                <!-- Guided Demo Credentials Hint Box -->
-                <div class="guide-box" id="credentialsGuide">
-                    <div class="guide-title">💡 Demo Customer Login</div>
-                    <div>Email: <strong class="text-accent" style="color: var(--accent);">alice@example.com</strong></div>
-                    <div>Password: <strong class="text-accent" style="color: var(--accent);">password</strong></div>
-                </div>
-
                 <!-- Login Form Wrapper -->
                 <div id="loginFormContainer">
                     <form method="POST" action="index.php">
@@ -344,19 +337,11 @@ if (isset($_SESSION['role'])) {
             document.getElementById('selectedPortal').value = portal;
             document.getElementById('emailLabel').textContent = demoCreds[portal].label;
             document.getElementById('emailInput').placeholder = demoCreds[portal].placeholder;
-
-            const guide = demoCreds[portal];
-            document.getElementById('credentialsGuide').innerHTML = `
-                <div class="guide-title">${guide.title}</div>
-                <div>Email: <strong class="text-accent">${guide.email}</strong></div>
-                <div>Password: <strong class="text-accent">${guide.pass}</strong></div>
-            `;
         }
 
         function showRegisterForm() {
             document.getElementById('loginFormContainer').style.display = 'none';
             document.getElementById('registerFormContainer').style.display = 'block';
-            document.getElementById('credentialsGuide').style.display = 'none';
             document.querySelector('.portal-tabs').style.display = 'none';
             document.getElementById('formTitle').textContent = 'Account Registration';
             document.getElementById('formSubtitle').textContent = 'Create a customer account to order food.';
@@ -365,7 +350,6 @@ if (isset($_SESSION['role'])) {
         function showLoginForm() {
             document.getElementById('loginFormContainer').style.display = 'block';
             document.getElementById('registerFormContainer').style.display = 'none';
-            document.getElementById('credentialsGuide').style.display = 'block';
             document.querySelector('.portal-tabs').style.display = 'grid';
             document.getElementById('formTitle').textContent = 'Account Sign In';
             document.getElementById('formSubtitle').textContent = 'Select your workspace portal to log in.';

@@ -585,9 +585,26 @@ function get_db_agent($id) {
 
 function get_db_customers() {
     global $conn;
-    $stmt = $conn->prepare("SELECT user_id as id, name, email, phone FROM users WHERE role = 'customer'");
+    $stmt = $conn->prepare("SELECT user_id as id, name, email, phone, created_at FROM users WHERE role = 'customer'");
     $stmt->execute();
-    return db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+    $customers = db_normalize($stmt->fetchAll(PDO::FETCH_ASSOC));
+    
+    foreach ($customers as &$cust) {
+        $id = $cust['id'];
+        if (isset($_SESSION['customer_address_' . $id])) {
+            $cust['address'] = $_SESSION['customer_address_' . $id];
+        } else {
+            // Find last order address
+            $o_stmt = $conn->prepare("SELECT delivery_address FROM (SELECT delivery_address FROM orders WHERE customer_id = :cid ORDER BY created_at DESC) WHERE ROWNUM = 1");
+            $o_stmt->execute(['cid' => $id]);
+            $addr = $o_stmt->fetchColumn();
+            if (is_resource($addr)) {
+                $addr = stream_get_contents($addr);
+            }
+            $cust['address'] = $addr ? $addr : 'No address on file';
+        }
+    }
+    return $customers;
 }
 
 function get_db_customer($id) {
