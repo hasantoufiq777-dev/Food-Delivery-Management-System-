@@ -36,36 +36,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_agent'])) {
     $id = isset($_POST['id']) && $_POST['id'] !== '' ? (int)$_POST['id'] : null;
     $name = trim($_POST['name']);
     $phone = trim($_POST['phone']);
+    $email = trim($_POST['email']);
     $vehicle = trim($_POST['vehicle']);
     $status = trim($_POST['status']);
     
-    if (empty($name) || empty($phone) || empty($vehicle)) {
+    if (empty($name) || empty($phone) || empty($email) || empty($vehicle)) {
         set_flash('error', 'Please fill in all required fields.');
     } else {
         try {
             if ($id === null) {
                 // Add New Agent
+                // Check if email already exists
+                $check_stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER(:email)");
+                $check_stmt->execute(['email' => $email]);
+                if ($check_stmt->fetchColumn() > 0) {
+                    set_flash('error', "The email '$email' is already registered by another account.");
+                    header('Location: agents.php');
+                    exit;
+                }
+
                 $stmt = $conn->prepare("SELECT NVL(MAX(user_id), 0) + 1 FROM users");
                 $stmt->execute();
                 $new_user_id = $stmt->fetchColumn();
                 
-                // Call stored procedure to register user & initialize agent
-                $stmt = $conn->prepare("CALL register_user(:uid, :name, :email, :pass, :phone, 'agent', :vehicle)");
-                $email = strtolower(str_replace(' ', '', $name)) . '@example.com';
+                $stmt = $conn->prepare("CALL register_user(?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([
-                    'uid' => $new_user_id,
-                    'name' => $name,
-                    'email' => $email,
-                    'pass' => 'password',
-                    'phone' => $phone,
-                    'vehicle' => $vehicle
+                    $new_user_id,
+                    $name,
+                    $email,
+                    'password',
+                    $phone,
+                    'agent',
+                    $vehicle
                 ]);
                 set_flash('success', 'Agent added successfully.');
             } else {
                 // Edit Agent
-                // 1. Update name & phone in users
-                $stmt = $conn->prepare("UPDATE users SET name = :name, phone = :phone WHERE user_id = (SELECT user_id FROM delivery_agents WHERE agent_id = :aid)");
-                $stmt->execute(['name' => $name, 'phone' => $phone, 'aid' => $id]);
+                // Check if email is already registered by another user
+                $check_stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER(:email) AND user_id != (SELECT user_id FROM delivery_agents WHERE agent_id = :aid)");
+                $check_stmt->execute(['email' => $email, 'aid' => $id]);
+                if ($check_stmt->fetchColumn() > 0) {
+                    set_flash('error', "The email '$email' is already registered by another account.");
+                    header('Location: agents.php');
+                    exit;
+                }
+
+                // 1. Update name, email & phone in users
+                $stmt = $conn->prepare("UPDATE users SET name = :name, email = :email, phone = :phone WHERE user_id = (SELECT user_id FROM delivery_agents WHERE agent_id = :aid)");
+                $stmt->execute(['name' => $name, 'email' => $email, 'phone' => $phone, 'aid' => $id]);
                 
                 // 2. Update vehicle & status in delivery_agents
                 $stmt = $conn->prepare("UPDATE delivery_agents SET vehicle_type = :vehicle, status = :status WHERE agent_id = :aid");
@@ -220,12 +238,16 @@ $unassigned_orders = array_filter($orders, function($o) {
                 <input type="text" name="name" class="form-input" required value="<?= $editing_agent ? e($editing_agent['name']) : '' ?>">
             </div>
             <div class="form-group">
-                <label class="form-label">Phone Number *</label>
-                <input type="text" name="phone" class="form-input" required value="<?= $editing_agent ? e($editing_agent['phone']) : '' ?>">
+                <label class="form-label">Email Address *</label>
+                <input type="email" name="email" class="form-input" required placeholder="agent@example.com" value="<?= $editing_agent ? e($editing_agent['email']) : '' ?>">
             </div>
         </div>
 
         <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Phone Number *</label>
+                <input type="text" name="phone" class="form-input" required value="<?= $editing_agent ? e($editing_agent['phone']) : '' ?>">
+            </div>
             <div class="form-group">
                 <label class="form-label">Vehicle Type *</label>
                 <select name="vehicle" class="form-select" required>
@@ -235,13 +257,14 @@ $unassigned_orders = array_filter($orders, function($o) {
                     <option value="Car" <?= ($editing_agent && $editing_agent['vehicle'] === 'Car') ? 'selected' : '' ?>>🚗 Car</option>
                 </select>
             </div>
-            <div class="form-group">
-                <label class="form-label">Status</label>
-                <select name="status" class="form-select">
-                    <option value="available" <?= ($editing_agent && $editing_agent['status'] === 'available') ? 'selected' : '' ?>>Available</option>
-                    <option value="busy" <?= ($editing_agent && $editing_agent['status'] === 'busy') ? 'selected' : '' ?>>Busy</option>
-                </select>
-            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select" style="max-width: 50%;">
+                <option value="available" <?= ($editing_agent && $editing_agent['status'] === 'available') ? 'selected' : '' ?>>Available</option>
+                <option value="busy" <?= ($editing_agent && $editing_agent['status'] === 'busy') ? 'selected' : '' ?>>Busy</option>
+            </select>
         </div>
 
         <div class="btn-group">

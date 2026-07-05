@@ -40,28 +40,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_restaurant'])) {
     $cuisine = trim($_POST['cuisine']);
     $address = trim($_POST['address']);
     $phone = trim($_POST['phone']);
+    $email = trim($_POST['email']);
     $rating = (float)$_POST['rating'];
     $image_url = trim($_POST['image_url']);
     
-    if (empty($name) || empty($cuisine) || empty($address)) {
+    if (empty($name) || empty($cuisine) || empty($address) || empty($email)) {
         set_flash('error', 'Please fill in all required fields.');
     } else {
         try {
             $img = $image_url ?: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&h=300&fit=crop';
             if ($id === null) {
                 // Add New Restaurant
+                // Check if email already exists
+                $check_stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER(:email)");
+                $check_stmt->execute(['email' => $email]);
+                if ($check_stmt->fetchColumn() > 0) {
+                    set_flash('error', "The email '$email' is already registered by another account.");
+                    header('Location: restaurants.php');
+                    exit;
+                }
+
                 // 1. Create User
                 $stmt = $conn->prepare("SELECT NVL(MAX(user_id), 0) + 1 FROM users");
                 $stmt->execute();
                 $new_user_id = $stmt->fetchColumn();
                 
-                $email = strtolower(str_replace(' ', '', $name)) . '@example.com';
-                $stmt = $conn->prepare("CALL register_user(:uid, :name, :email, 'password', :phone, 'restaurant', NULL)");
+                $stmt = $conn->prepare("CALL register_user(?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([
-                    'uid' => $new_user_id,
-                    'name' => $name,
-                    'email' => $email,
-                    'phone' => $phone
+                    $new_user_id,
+                    $name,
+                    $email,
+                    'password',
+                    $phone,
+                    'restaurant',
+                    null
                 ]);
                 
                 // 2. Create Restaurant mapping
@@ -70,22 +82,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_restaurant'])) {
                 $new_rest_id = $stmt->fetchColumn();
                 
                 $stmt = $conn->prepare("INSERT INTO restaurants (restaurant_id, user_id, name, address, cuisine_type, rating, status, image_url) 
-                                        VALUES (:rid, :uid, :name, :address, :cuisine, :rating, 'active', :img)");
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
                 $stmt->execute([
-                    'rid' => $new_rest_id,
-                    'uid' => $new_user_id,
-                    'name' => $name,
-                    'address' => $address,
-                    'cuisine' => $cuisine,
-                    'rating' => $rating ?: 4.5,
-                    'img' => $img
+                    $new_rest_id,
+                    $new_user_id,
+                    $name,
+                    $address,
+                    $cuisine,
+                    $rating ?: 4.5,
+                    'active',
+                    $img
                 ]);
                 set_flash('success', 'Restaurant added successfully.');
             } else {
                 // Edit Restaurant
+                // Check if email is already registered by another user
+                $check_stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE LOWER(email) = LOWER(:email) AND user_id != (SELECT user_id FROM restaurants WHERE restaurant_id = :rid)");
+                $check_stmt->execute(['email' => $email, 'rid' => $id]);
+                if ($check_stmt->fetchColumn() > 0) {
+                    set_flash('error', "The email '$email' is already registered by another account.");
+                    header('Location: restaurants.php');
+                    exit;
+                }
+
                 // 1. Update User details
-                $stmt = $conn->prepare("UPDATE users SET name = :name, phone = :phone WHERE user_id = (SELECT user_id FROM restaurants WHERE restaurant_id = :rid)");
-                $stmt->execute(['name' => $name, 'phone' => $phone, 'rid' => $id]);
+                $stmt = $conn->prepare("UPDATE users SET name = :name, email = :email, phone = :phone WHERE user_id = (SELECT user_id FROM restaurants WHERE restaurant_id = :rid)");
+                $stmt->execute(['name' => $name, 'email' => $email, 'phone' => $phone, 'rid' => $id]);
                 
                 // 2. Update Restaurant details
                 $stmt = $conn->prepare("UPDATE restaurants SET name = :name, address = :address, cuisine_type = :cuisine, rating = :rating, image_url = :img 
@@ -172,8 +194,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) 
                 <input type="text" name="phone" class="form-input" value="<?= $editing_rest ? e($editing_rest['phone']) : '' ?>">
             </div>
             <div class="form-group">
-                <label class="form-label">Rating (1.0 to 5.0)</label>
-                <input type="number" name="rating" class="form-input" step="0.1" min="1" max="5" value="<?= $editing_rest ? e($editing_rest['rating']) : '4.5' ?>">
+                <label class="form-label">Email Address *</label>
+                <input type="email" name="email" class="form-input" required placeholder="restaurant@example.com" value="<?= $editing_rest ? e($editing_rest['email']) : '' ?>">
             </div>
         </div>
 
@@ -182,9 +204,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) 
             <input type="text" name="address" class="form-input" required value="<?= $editing_rest ? e($editing_rest['address']) : '' ?>">
         </div>
 
-        <div class="form-group">
-            <label class="form-label">Image URL</label>
-            <input type="url" name="image_url" class="form-input" placeholder="https://example.com/image.jpg" value="<?= $editing_rest ? e($editing_rest['image_url']) : '' ?>">
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Rating (1.0 to 5.0)</label>
+                <input type="number" name="rating" class="form-input" step="0.1" min="1" max="5" value="<?= $editing_rest ? e($editing_rest['rating']) : '4.5' ?>">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Image URL</label>
+                <input type="url" name="image_url" class="form-input" placeholder="https://example.com/image.jpg" value="<?= $editing_rest ? e($editing_rest['image_url']) : '' ?>">
+            </div>
         </div>
 
         <div class="btn-group">
