@@ -261,8 +261,8 @@ input, select, textarea, button {
 }
 
 .nav-link.active {
-    background: linear-gradient(135deg, rgba(251, 146, 60, 0.15), rgba(251, 146, 60, 0.05));
-    color: var(--accent);
+    background: #FEF0E4;
+    color: #9A5B12;
     font-weight: 600;
 }
 
@@ -292,7 +292,7 @@ input, select, textarea, button {
 .cart-badge {
     margin-left: auto;
     background: var(--accent);
-    color: white;
+    color: #5C2308;
     font-size: 0.65rem;
     font-weight: 700;
     padding: 0.15rem 0.45rem;
