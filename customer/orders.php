@@ -16,6 +16,70 @@ $customer_id = $_SESSION['customer_id'];
 
 require_once __DIR__ . '/../includes/header.php';
 
+// Handle Review Submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_order_review'])) {
+    $order_id = (int)$_POST['order_id'];
+    $rating = (int)$_POST['rating'];
+    $comments = trim($_POST['comments']);
+    
+    // Fetch order details to get restaurant_id
+    $ord_details = get_db_order($order_id);
+    if ($ord_details && (int)$ord_details['customer_id'] === $customer_id && $ord_details['status'] === 'delivered') {
+        try {
+            // Check if already reviewed
+            $check_stmt = $conn->prepare("SELECT COUNT(*) FROM reviews WHERE order_id = :oid");
+            $check_stmt->execute(['oid' => $order_id]);
+            if ($check_stmt->fetchColumn() == 0) {
+                // Call stored procedure to submit review
+                $stmt = $conn->prepare("CALL submit_review(?, ?, ?, ?, ?)");
+                $stmt->execute([
+                    $customer_id,
+                    $ord_details['restaurant_id'],
+                    $order_id,
+                    $rating,
+                    $comments
+                ]);
+                set_flash('success', 'Thank you for your feedback! Your review has been submitted.');
+            } else {
+                set_flash('error', 'You have already reviewed this order.');
+            }
+        } catch (PDOException $e) {
+            set_flash('error', 'Database Error: ' . $e->getMessage());
+        }
+    } else {
+        set_flash('error', 'Invalid order for review.');
+    }
+    header('Location: orders.php?id=' . $order_id);
+    exit;
+}
+
+// Handle Order Cancellation
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cancel_order'])) {
+    $order_id = (int)$_POST['order_id'];
+    
+    // Fetch order details
+    $ord_details = get_db_order($order_id);
+    if ($ord_details && (int)$ord_details['customer_id'] === $customer_id) {
+        if ($ord_details['status'] === 'placed') {
+            try {
+                // Update order status to cancelled
+                $stmt = $conn->prepare("UPDATE orders SET status = 'cancelled', updated_at = SYSDATE WHERE order_id = :oid");
+                $stmt->execute(['oid' => $order_id]);
+                
+                set_flash('success', 'Order #' . $order_id . ' has been cancelled successfully. A 100% refund has been processed.');
+            } catch (PDOException $e) {
+                set_flash('error', 'Database Error: ' . $e->getMessage());
+            }
+        } else {
+            set_flash('error', 'Cannot cancel order because it is already being prepared or delivered.');
+        }
+    } else {
+        set_flash('error', 'Invalid order for cancellation.');
+    }
+    header('Location: orders.php?id=' . $order_id);
+    exit;
+}
+
 // Load customer orders from database
 $my_orders = get_db_orders(['customer_id' => $customer_id]);
 
@@ -60,7 +124,16 @@ $paginated_orders = $pagination['data'];
             <h1 class="page-title">Track Order #<?= $detail_order['id'] ?></h1>
             <p class="page-subtitle">From: <strong><?= e($rest ? $rest['name'] : 'Restaurant') ?></strong></p>
         </div>
-        <div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <?php if ($detail_order['status'] === 'placed'): ?>
+                <form method="POST" action="orders.php" onsubmit="return confirm('Are you sure you want to cancel this order? You will receive a 100% refund.');" style="margin: 0;">
+                    <input type="hidden" name="order_id" value="<?= $detail_order['id'] ?>">
+                    <input type="hidden" name="cancel_order" value="1">
+                    <button type="submit" class="btn btn-danger btn-sm" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+                        ❌ Cancel Order
+                    </button>
+                </form>
+            <?php endif; ?>
             <?= status_badge($detail_order['status']) ?>
         </div>
     </div>
@@ -70,6 +143,83 @@ $paginated_orders = $pagination['data'];
         <h3 class="section-title">📦 Delivery Progress</h3>
         <?= order_timeline($detail_order['status']) ?>
     </div>
+
+    <?php if ($detail_order['status'] === 'cancelled'): ?>
+        <div class="card mb-3" style="border-left: 4px solid #EF4444; background-color: #FEF2F2; padding: 1rem 1.5rem;">
+            <h3 class="section-title" style="color: #991B1B; margin: 0;">💵 Refund Processed</h3>
+            <p style="margin: 0.5rem 0 0; font-size: 0.92rem; color: #7F1D1D; line-height: 1.4;">
+                <strong>Refund Policy:</strong> Since this order was cancelled before the restaurant confirmed or prepared it, a <strong>100% full refund</strong> of <strong><?= format_price($detail_order['total']) ?></strong> has been successfully credited back to your original payment method.
+            </p>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($detail_order['status'] === 'delivered'): ?>
+        <?php
+        // Fetch existing review
+        $review_stmt = $conn->prepare("SELECT * FROM reviews WHERE order_id = :oid");
+        $review_stmt->execute(['oid' => $detail_order['id']]);
+        $existing_review = db_normalize($review_stmt->fetch(PDO::FETCH_ASSOC));
+        ?>
+        
+        <div class="card mb-3">
+            <h3 class="section-title">⭐ Restaurant Feedback</h3>
+            <?php if ($existing_review): ?>
+                <div class="review-display" style="padding: 0.5rem 0;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                        <span style="font-size: 1.25rem; color: #FBBF24;">
+                            <?= str_repeat('★', $existing_review['rating']) . str_repeat('☆', 5 - $existing_review['rating']) ?>
+                        </span>
+                        <strong style="font-size: 1rem; color: var(--text-dark);"><?= $existing_review['rating'] ?>.0 / 5.0</strong>
+                    </div>
+                    <?php if (!empty($existing_review['comments'])): ?>
+                        <blockquote style="margin: 0; padding: 0.75rem 1rem; background: var(--bg-tint); border-left: 4px solid var(--accent); border-radius: 4px; font-style: italic; color: var(--text-secondary);">
+                            "<?= e($existing_review['comments']) ?>"
+                        </blockquote>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <form method="POST" action="orders.php" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 0.5rem;">
+                    <input type="hidden" name="order_id" value="<?= $detail_order['id'] ?>">
+                    <input type="hidden" name="submit_order_review" value="1">
+                    
+                    <div class="form-group">
+                        <label class="form-label" style="font-weight: 600;">Your Rating *</label>
+                        <div class="rating-selector" style="display: flex; gap: 0.5rem;">
+                            <?php for ($i = 5; $i >= 1; $i--): ?>
+                                <input type="radio" id="star<?= $i ?>" name="rating" value="<?= $i ?>" required <?= $i === 5 ? 'checked' : '' ?> style="display:none;">
+                                <label for="star<?= $i ?>" class="star-label" onclick="selectStars(<?= $i ?>)" id="lbl-star<?= $i ?>" style="font-size: 1.75rem; color: #FBBF24; cursor: pointer;">
+                                    ★
+                                </label>
+                            <?php endfor; ?>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label" style="font-weight: 600;">Comments & Feedback</label>
+                        <textarea name="comments" class="form-input" rows="3" placeholder="Tell us about your food and delivery experience..." style="resize: none;"></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Submit Review</button>
+                </form>
+                
+                <script>
+                function selectStars(rating) {
+                    for (let i = 1; i <= 5; i++) {
+                        const lbl = document.getElementById('lbl-star' + i);
+                        if (i <= rating) {
+                            lbl.textContent = '★';
+                        } else {
+                            lbl.textContent = '☆';
+                        }
+                    }
+                    document.getElementById('star' + rating).checked = true;
+                }
+                // Initialize default star state
+                selectStars(5);
+                </script>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 
     <div class="two-col">
         <!-- Order items details -->
